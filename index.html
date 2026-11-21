@@ -4,15 +4,11 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>手機版敬拜選曲</title>
-  <!-- 載入 Tailwind CSS 來處理排版與美化 -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- 載入 React 核心函式庫 -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <!-- 載入 Babel 來讓瀏覽器即時看得懂 JSX 語法 -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    /* 隱藏捲軸但保留捲動功能，讓手機版更乾淨 */
     ::-webkit-scrollbar { display: none; }
     body { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
@@ -23,7 +19,7 @@
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
-    // 工具函數：解析 CSV 格式文字
+    // 嚴謹的 CSV 解析器
     const parseCSV = (str) => {
       const rows = [];
       let row = [];
@@ -66,34 +62,55 @@
       const [selectedKey, setSelectedKey] = useState("");
       const [selectedTempo, setSelectedTempo] = useState("");
 
-      // 從 Google Sheets 讀取資料
       useEffect(() => {
         const fetchData = async () => {
           setLoading(true);
           setError(null);
-          // 透過 gviz API 取得 CSV 格式，這裡讀取的是擁有完整資料庫的「所有歌曲資料」工作表
-          const csvUrl = 'https://docs.google.com/spreadsheets/d/10akaeC-GMTskdeCmiZuEan8U3rKoqcmTpYIJsX29zSA/gviz/tq?tqx=out:csv&sheet=所有歌曲資料';
+          
+          // 改用最穩定的 gid=166702070 (所有歌曲資料工作表) 進行讀取
+          const csvUrl = 'https://docs.google.com/spreadsheets/d/10akaeC-GMTskdeCmiZuEan8U3rKoqcmTpYIJsX29zSA/export?format=csv&gid=166702070';
           
           try {
             const response = await fetch(csvUrl);
-            if (!response.ok) throw new Error('網路錯誤，無法讀取資料');
+            if (!response.ok) {
+              throw new Error(`HTTP 錯誤碼: ${response.status}`);
+            }
             const csvText = await response.text();
             
+            // 檢查是否不小心抓到 Google 登入頁面 (代表權限或網域問題)
+            if (csvText.trim().startsWith('<!DOCTYPE html>') || csvText.includes('<html')) {
+              throw new Error('回傳格式為網頁而非資料，請確認試算表已「發布到網路」或權限開放。');
+            }
+
             const parsedData = parseCSV(csvText);
             if (parsedData.length > 1) {
-              const headers = parsedData[0].map(h => h.trim());
-              const data = parsedData.slice(1).map(row => {
+              // 自動尋找包含「歌名」的那一列作為標題列，避免上方有空白列導致錯位
+              let headerRowIndex = parsedData.findIndex(row => row.some(cell => cell.trim() === '歌名'));
+              if (headerRowIndex === -1) headerRowIndex = 0;
+
+              const headers = parsedData[headerRowIndex].map(h => h.trim());
+              const data = parsedData.slice(headerRowIndex + 1).map(row => {
                 const obj = {};
                 headers.forEach((header, index) => {
                   obj[header] = row[index] ? row[index].trim() : "";
                 });
                 return obj;
               }).filter(song => song['歌名'] && song['歌名'] !== "");
+              
+              if (data.length === 0) {
+                throw new Error('成功連線但解析出 0 首歌曲，請檢查「歌名」欄位是否正確。');
+              }
               setSongs(data);
+            } else {
+              throw new Error('試算表內容為空。');
             }
           } catch (err) {
             console.error("Fetch error:", err);
-            setError('無法載入詩歌資料，請檢查網路連線或表單權限。');
+            if (window.location.protocol === 'file:') {
+              setError('⚠️ 偵測到您正從本機資料夾直接開啟網頁 (file://)。瀏覽器安全限制會阻擋直接讀取 Google 試算表，請將檔案上傳至 GitHub Pages 等網站空間後再開啟！');
+            } else {
+              setError(`讀取失敗：${err.message}`);
+            }
           } finally {
             setLoading(false);
           }
@@ -102,7 +119,6 @@
         fetchData();
       }, []);
 
-      // 取得不重複的調性與速度供選單使用
       const uniqueKeys = useMemo(() => {
         const keys = new Set(songs.map(song => song['調性']).filter(k => k));
         return Array.from(keys).sort();
@@ -113,7 +129,6 @@
         return Array.from(tempos).sort();
       }, [songs]);
 
-      // 搜尋與篩選邏輯
       const filteredSongs = useMemo(() => {
         return songs.filter(song => {
           const matchName = !searchQuery || (song['歌名'] && song['歌名'].toLowerCase().includes(searchQuery.toLowerCase()));
@@ -170,120 +185,4 @@
               </select>
               
               <select 
-                className="flex-1 bg-slate-800 text-white border border-slate-700 rounded-xl px-3 py-2.5 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                value={selectedTempo}
-                onChange={(e) => setSelectedTempo(e.target.value)}
-              >
-                <option value="">所有速度 ▾</option>
-                {uniqueTempos.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          </div>
-
-          {/* 歌曲列表區塊 */}
-          <div className="flex-1 overflow-y-auto bg-gray-50 p-4 pb-20">
-            {loading && (
-              <div className="flex flex-col items-center justify-center h-40 text-gray-400 gap-3">
-                <span className="text-2xl animate-spin">⏳</span>
-                <p>載入詩歌資料庫中...</p>
-              </div>
-            )}
-            
-            {error && (
-              <div className="bg-red-50 text-red-500 p-4 rounded-xl text-center shadow-sm border border-red-100">
-                <p>{error}</p>
-              </div>
-            )}
-
-            {!loading && !error && filteredSongs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 text-gray-400 gap-2">
-                <span className="text-3xl">🗂️</span>
-                <p>找不到符合條件的詩歌</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {filteredSongs.map((song, index) => (
-                  <div key={index} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col gap-3 transition-active active:scale-[0.98]">
-                    
-                    {/* 歌曲資訊區 */}
-                    <div>
-                      <div className="flex justify-between items-start mb-1">
-                        <h3 className="text-lg font-bold text-gray-900 leading-tight">
-                          {song['歌名']}
-                        </h3>
-                        <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-1 rounded-full whitespace-nowrap">
-                          {song['編號']}
-                        </span>
-                      </div>
-                      
-                      <div className="flex flex-wrap gap-2 text-xs mt-2">
-                        {song['調性'] && (
-                          <span className="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-md font-medium">
-                            調性: {song['調性']}
-                          </span>
-                        )}
-                        {song['速度'] && (
-                          <span className="bg-orange-50 text-orange-700 px-2.5 py-1 rounded-md font-medium">
-                            {song['速度']}
-                          </span>
-                        )}
-                        {song['發行者'] && (
-                          <span className="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-md font-medium">
-                            {song['發行者']}
-                          </span>
-                        )}
-                      </div>
-                      
-                      {song['敬拜類型'] && song['敬拜類型'] !== '-' && (
-                        <div className="text-xs text-gray-500 mt-2 flex items-center gap-1">
-                          💿 {song['敬拜類型']}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 操作按鈕區 */}
-                    <div className="flex gap-2 pt-2 mt-1 border-t border-gray-50">
-                      {song['歌譜連結'] ? (
-                        <a 
-                          href={song['歌譜連結']}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 transition-colors"
-                        >
-                          📄 開啟歌譜
-                        </a>
-                      ) : (
-                        <button disabled className="flex-1 bg-gray-100 text-gray-400 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 cursor-not-allowed">
-                          📄 無歌譜
-                        </button>
-                      )}
-                      
-                      {song['PPT連結'] ? (
-                        <a 
-                          href={song['PPT連結']}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 transition-colors"
-                        >
-                          🖥️ 開啟 PPT
-                        </a>
-                      ) : (
-                        <button disabled className="flex-1 bg-gray-100 text-gray-400 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 cursor-not-allowed">
-                          🖥️ 無 PPT
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<WorshipApp />);
-  </script>
-</body>
-</html>
+                className="flex-1 bg-slate-800 text-white border border-slate-700 rounded-xl px-3 py-2.5 appearance-none focus:outline-none focus:ring-2 focus:
