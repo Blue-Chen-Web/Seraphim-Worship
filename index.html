@@ -13,13 +13,17 @@
     body { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
 </head>
-<body class="bg-gray-100">
+<body class="bg-slate-200">
   <div id="root"></div>
 
   <script type="text/babel">
     const { useState, useEffect, useMemo } = React;
 
-    // 嚴謹的 CSV 解析器
+    const WORSHIP_TYPES = [
+      '敬拜', '讚美', '宣告', '禱告',
+      '渴慕', '喜樂', '感恩', '呼求'
+    ];
+
     const parseCSV = (str) => {
       const rows = [];
       let row = [];
@@ -38,7 +42,7 @@
           row.push(curr);
           curr = '';
         } else if ((char === '\n' || char === '\r') && !inQuotes) {
-          if (char === '\r' && str[i + 1] === '\n') i++; 
+          if (char === '\r' && str[i + 1] === '\n') i++;
           row.push(curr);
           rows.push(row);
           row = [];
@@ -58,25 +62,25 @@
       const [songs, setSongs] = useState([]);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState(null);
-      const [searchQuery, setSearchQuery] = useState("");
+
+      const [songQuery, setSongQuery] = useState("");
       const [selectedKey, setSelectedKey] = useState("");
       const [selectedTempo, setSelectedTempo] = useState("");
+      const [selectedPublisher, setSelectedPublisher] = useState("");
+      const [albumQuery, setAlbumQuery] = useState("");
+      const [selectedTypes, setSelectedTypes] = useState([]);
 
       useEffect(() => {
         const fetchData = async () => {
           setLoading(true);
           setError(null);
-          
-          // 使用您「發布到網路」後的專屬 CSV 公開連結，直連「所有歌曲資料」分頁
           const csvUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRi51ec3cxag_2cioNtmSphJKlMoA4Rt0fJrJH33cdvoXQd3Ki2uT7gbV6BdWH6dSjHBS-9PCtU6bUW/pub?gid=166702070&single=true&output=csv';
-          
+
           try {
             const response = await fetch(csvUrl);
-            if (!response.ok) {
-              throw new Error(`HTTP 錯誤碼: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`HTTP 錯誤碼: ${response.status}`);
             const csvText = await response.text();
-            
+
             if (csvText.trim().startsWith('<!DOCTYPE html>') || csvText.includes('<html')) {
               throw new Error('回傳格式為網頁而非資料，請確認試算表已正確發布。');
             }
@@ -94,10 +98,7 @@
                 });
                 return obj;
               }).filter(song => song['歌名'] && song['歌名'] !== "");
-              
-              if (data.length === 0) {
-                throw new Error('成功連線但解析出 0 首歌曲，請檢查「歌名」欄位是否正確。');
-              }
+
               setSongs(data);
             } else {
               throw new Error('試算表內容為空。');
@@ -105,7 +106,7 @@
           } catch (err) {
             console.error("Fetch error:", err);
             if (window.location.protocol === 'file:') {
-              setError('⚠️ 偵測到您正從本機資料夾直接開啟網頁 (file://)。請透過 GitHub Pages 網址開啟！');
+              setError('⚠️ 偵測到您正從本機直接開啟網頁 (file://)，瀏覽器會阻擋跨網域讀取，請透過 GitHub Pages 網址開啟。');
             } else {
               setError(`讀取失敗：${err.message}`);
             }
@@ -118,179 +119,332 @@
       }, []);
 
       const uniqueKeys = useMemo(() => {
-        const keys = new Set(songs.map(song => song['調性']).filter(k => k));
-        return Array.from(keys).sort();
+        return Array.from(new Set(songs.map(s => s['調性']).filter(Boolean))).sort();
       }, [songs]);
 
       const uniqueTempos = useMemo(() => {
-        const tempos = new Set(songs.map(song => song['速度']).filter(t => t));
-        return Array.from(tempos).sort();
+        return Array.from(new Set(songs.map(s => s['速度']).filter(Boolean))).sort();
       }, [songs]);
+
+      const uniquePublishers = useMemo(() => {
+        return Array.from(new Set(songs.map(s => s['發行者']).filter(Boolean))).sort();
+      }, [songs]);
+
+      const toggleType = (type) => {
+        setSelectedTypes(prev =>
+          prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+        );
+      };
+
+      const resetFilters = () => {
+        setSongQuery("");
+        setSelectedKey("");
+        setSelectedTempo("");
+        setSelectedPublisher("");
+        setAlbumQuery("");
+        setSelectedTypes([]);
+      };
 
       const filteredSongs = useMemo(() => {
         return songs.filter(song => {
-          const matchName = !searchQuery || (song['歌名'] && song['歌名'].toLowerCase().includes(searchQuery.toLowerCase()));
+          const matchSong = !songQuery.trim() ||
+            (song['歌名'] && song['歌名'].toLowerCase().includes(songQuery.trim().toLowerCase()));
+
           const matchKey = !selectedKey || song['調性'] === selectedKey;
           const matchTempo = !selectedTempo || song['速度'] === selectedTempo;
-          return matchName && matchKey && matchTempo;
+          const matchPublisher = !selectedPublisher || song['發行者'] === selectedPublisher;
+
+          const matchAlbum = !albumQuery.trim() ||
+            (song['專輯'] && song['專輯'].toLowerCase().includes(albumQuery.trim().toLowerCase()));
+
+          const songTypeText = song['敬拜類型'] || "";
+          const matchTypes = selectedTypes.length === 0 ||
+            selectedTypes.every(t => songTypeText.includes(t));
+
+          return matchSong && matchKey && matchTempo && matchPublisher && matchAlbum && matchTypes;
         });
-      }, [songs, searchQuery, selectedKey, selectedTempo]);
+      }, [songs, songQuery, selectedKey, selectedTempo, selectedPublisher, albumQuery, selectedTypes]);
+
+      const hasActiveFilter = songQuery || selectedKey || selectedTempo || selectedPublisher || albumQuery || selectedTypes.length > 0;
 
       return (
-        <div className="max-w-md mx-auto bg-white min-h-screen shadow-xl overflow-hidden flex flex-col font-sans relative">
-          
-          {/* 頂部 Header */}
-          <div className="bg-slate-900 text-white p-5 pb-6 shadow-md z-10">
-            <h1 className="text-2xl font-bold mb-1 flex items-center gap-2">
-              🎵 手機版敬拜選曲
-            </h1>
-            <p className="text-slate-300 text-xs mb-4">直式單手操作 • 動態篩選 • 一鍵開啟歌譜與PPT</p>
-            
-            {/* 統計列 */}
-            <div className="flex gap-4 text-xs font-medium mb-4 bg-slate-800 p-2 rounded-lg justify-center">
-              <div className="flex items-center gap-1">
-                📚 全曲庫: <span className="text-blue-300 font-bold">{songs.length}</span> 首
-              </div>
-              <div className="w-px bg-slate-600"></div>
-              <div className="flex items-center gap-1">
-                🎯 篩選結果: <span className="text-green-300 font-bold">{filteredSongs.length}</span> 首
-              </div>
+        <div className="max-w-md mx-auto bg-white min-h-screen shadow-xl flex flex-col font-sans text-slate-900">
+
+          {/* 標題與副標題 */}
+          <div className="bg-[#2f5597] text-white text-center py-3 px-4">
+            <h1 className="text-xl font-bold tracking-wide">🎵 手機版敬拜選曲</h1>
+          </div>
+          <div className="bg-[#d9e2f3] text-[#1f3864] text-center py-1.5 px-3 text-xs font-medium border-b border-slate-300">
+            直式單手操作・動態篩選・一鍵開啟歌譜與PPT
+          </div>
+
+          {/* 統計列 */}
+          <div className="grid grid-cols-2 border-b border-slate-300 bg-white text-center">
+            <div className="py-2 px-2 border-r border-slate-300">
+              <div className="text-xs font-bold text-slate-700">📚 全曲庫總數</div>
+              <div className="text-lg font-extrabold text-[#1f4e78] mt-0.5">{songs.length} 首</div>
             </div>
-            
-            {/* 搜尋列 */}
-            <div className="relative mb-3">
-              <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-gray-400">
-                🔍
-              </div>
-              <input 
-                type="text" 
-                placeholder="搜尋歌名..." 
-                className="w-full pl-10 pr-4 py-3 bg-white text-gray-900 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm text-base"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            
-            {/* 過濾選單 */}
-            <div className="flex gap-3">
-              <select 
-                className="flex-1 bg-slate-800 text-white border border-slate-700 rounded-xl px-3 py-2.5 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                value={selectedKey}
-                onChange={(e) => setSelectedKey(e.target.value)}
-              >
-                <option value="">所有調性 ▾</option>
-                {uniqueKeys.map(k => <option key={k} value={k}>{k}</option>)}
-              </select>
-              
-              <select 
-                className="flex-1 bg-slate-800 text-white border border-slate-700 rounded-xl px-3 py-2.5 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                value={selectedTempo}
-                onChange={(e) => setSelectedTempo(e.target.value)}
-              >
-                <option value="">所有速度 ▾</option>
-                {uniqueTempos.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
+            <div className="py-2 px-2">
+              <div className="text-xs font-bold text-slate-700">🎯 符合篩選結果</div>
+              <div className="text-lg font-extrabold text-[#1e7e34] mt-0.5">{filteredSongs.length} 首</div>
             </div>
           </div>
 
-          {/* 歌曲列表區塊 */}
-          <div className="flex-1 overflow-y-auto bg-gray-50 p-4 pb-20">
+          {/* 篩選表單區 */}
+          <div className="divide-y divide-slate-300 border-b border-slate-300 text-sm">
+            {/* 歌名關鍵字 */}
+            <div className="grid grid-cols-12 items-center">
+              <label className="col-span-4 bg-[#e9edf4] py-2.5 px-2.5 font-bold text-slate-800 border-r border-slate-300">
+                🔍 歌名關鍵字
+              </label>
+              <div className="col-span-8 p-1.5 bg-white">
+                <input
+                  type="text"
+                  value={songQuery}
+                  onChange={(e) => setSongQuery(e.target.value)}
+                  placeholder="輸入歌名..."
+                  className="w-full border border-slate-400 px-2.5 py-1.5 text-sm focus:outline-none focus:border-[#2f5597]"
+                />
+              </div>
+            </div>
+
+            {/* 調性選擇 */}
+            <div className="grid grid-cols-12 items-center">
+              <label className="col-span-4 bg-[#e9edf4] py-2.5 px-2.5 font-bold text-slate-800 border-r border-slate-300">
+                🎵 調性選擇
+              </label>
+              <div className="col-span-8 p-1.5 bg-white">
+                <select
+                  value={selectedKey}
+                  onChange={(e) => setSelectedKey(e.target.value)}
+                  className="w-full border border-slate-400 px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:border-[#2f5597]"
+                >
+                  <option value="">全部</option>
+                  {uniqueKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* 速度分類 */}
+            <div className="grid grid-cols-12 items-center">
+              <label className="col-span-4 bg-[#e9edf4] py-2.5 px-2.5 font-bold text-slate-800 border-r border-slate-300">
+                ⏱️ 速度分類
+              </label>
+              <div className="col-span-8 p-1.5 bg-white">
+                <select
+                  value={selectedTempo}
+                  onChange={(e) => setSelectedTempo(e.target.value)}
+                  className="w-full border border-slate-400 px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:border-[#2f5597]"
+                >
+                  <option value="">全部</option>
+                  {uniqueTempos.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* 發行者 */}
+            <div className="grid grid-cols-12 items-center">
+              <label className="col-span-4 bg-[#e9edf4] py-2.5 px-2.5 font-bold text-slate-800 border-r border-slate-300">
+                🎤 發行者
+              </label>
+              <div className="col-span-8 p-1.5 bg-white">
+                <select
+                  value={selectedPublisher}
+                  onChange={(e) => setSelectedPublisher(e.target.value)}
+                  className="w-full border border-slate-400 px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:border-[#2f5597]"
+                >
+                  <option value="">全部</option>
+                  {uniquePublishers.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* 專輯關鍵字 */}
+            <div className="grid grid-cols-12 items-center">
+              <label className="col-span-4 bg-[#e9edf4] py-2.5 px-2.5 font-bold text-slate-800 border-r border-slate-300">
+                💿 專輯關鍵字
+              </label>
+              <div className="col-span-8 p-1.5 bg-white">
+                <input
+                  type="text"
+                  value={albumQuery}
+                  onChange={(e) => setAlbumQuery(e.target.value)}
+                  placeholder="輸入專輯名稱..."
+                  className="w-full border border-slate-400 px-2.5 py-1.5 text-sm focus:outline-none focus:border-[#2f5597]"
+                />
+              </div>
+            </div>
+
+            {/* 敬拜類型複選標題 */}
+            <div className="bg-[#2f5597] text-white text-center py-2 px-3 font-bold text-sm">
+              🏷️ 敬拜類型（點選下方方塊複選）
+            </div>
+
+            {/* 可複選類型方塊區 */}
+            <div className="grid grid-cols-12">
+              <div className="col-span-3 bg-[#e9edf4] flex items-center justify-center text-center font-bold text-slate-800 p-2 border-r border-slate-300 leading-snug">
+                可複選<br />類型
+              </div>
+              <div className="col-span-9 grid grid-cols-4 divide-x divide-y divide-slate-200 bg-white text-center">
+                {WORSHIP_TYPES.map((type) => {
+                  const checked = selectedTypes.includes(type);
+                  return (
+                    <button
+                      type="button"
+                      key={type}
+                      onClick={() => toggleType(type)}
+                      className={`py-2 px-1 flex flex-col items-center justify-center gap-1.5 transition-colors ${
+                        checked ? 'bg-blue-50 text-[#1f4e78] font-bold' : 'text-slate-800 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="text-xs">{type}</span>
+                      <span className={`w-5 h-5 border flex items-center justify-center rounded-sm text-xs ${
+                        checked
+                          ? 'bg-[#2f5597] border-[#2f5597] text-white'
+                          : 'bg-white border-slate-400 text-transparent'
+                      }`}>
+                        ✓
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* 清除篩選提示列 */}
+          {hasActiveFilter && (
+            <div className="bg-amber-50 px-3 py-2 border-b border-amber-200 flex items-center justify-between text-xs">
+              <span className="text-amber-900 truncate">
+                已套用篩選{selectedTypes.length > 0 ? `（${selectedTypes.join('、')}）` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="ml-2 shrink-0 bg-amber-600 text-white px-2.5 py-1 rounded font-medium hover:bg-amber-700"
+              >
+                清除全部
+              </button>
+            </div>
+          )}
+
+          {/* 列表表頭 */}
+          <div className="grid grid-cols-12 bg-[#2f5597] text-white text-xs font-bold text-center items-stretch border-b border-slate-400">
+            <div className="col-span-3 py-2.5 px-1 border-r border-[#4a72b8] flex items-center justify-center">
+              歌名與編號
+            </div>
+            <div className="col-span-3 py-2.5 px-1 border-r border-[#4a72b8] flex items-center justify-center leading-tight">
+              調性與類型
+            </div>
+            <div className="col-span-3 py-2.5 px-1 border-r border-[#4a72b8] flex items-center justify-center leading-tight">
+              發行者與專輯
+            </div>
+            <div className="col-span-1.5 col-span-1 py-2.5 px-0.5 border-r border-[#4a72b8] flex items-center justify-center">
+              歌譜
+            </div>
+            <div className="col-span-2 py-2.5 px-1 flex items-center justify-center">
+              歌譜 / PPT
+            </div>
+          </div>
+
+          {/* 列表內容區 */}
+          <div className="flex-1 bg-white divide-y divide-slate-200">
             {loading && (
-              <div className="flex flex-col items-center justify-center h-40 text-gray-400 gap-3">
-                <span className="text-2xl animate-spin">⏳</span>
-                <p>載入詩歌資料庫中...</p>
+              <div className="py-12 text-center text-slate-500 text-sm">
+                ⏳ 載入詩歌資料庫中...
               </div>
             )}
-            
+
             {error && (
-              <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm leading-relaxed shadow-sm border border-red-200">
-                <p className="font-bold mb-1">連線發生問題</p>
-                <p>{error}</p>
+              <div className="m-3 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded leading-relaxed">
+                {error}
               </div>
             )}
 
-            {!loading && !error && filteredSongs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 text-gray-400 gap-2">
-                <span className="text-3xl">🗂️</span>
-                <p>找不到符合條件的詩歌</p>
+            {!loading && !error && filteredSongs.length === 0 && (
+              <div className="py-12 text-center text-slate-400 text-sm">
+                找不到符合篩選條件的詩歌
               </div>
-            ) : (
-              <div className="space-y-3">
-                {filteredSongs.map((song, index) => (
-                  <div key={index} className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex flex-col gap-3 transition-active active:scale-[0.98]">
-                    
-                    {/* 歌曲資訊區 */}
-                    <div>
-                      <div className="flex justify-between items-start mb-1">
-                        <h3 className="text-lg font-bold text-gray-900 leading-tight">
-                          {song['歌名']}
-                        </h3>
-                        <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-1 rounded-full whitespace-nowrap">
-                          {song['編號']}
-                        </span>
-                      </div>
-                      
-                      <div className="flex flex-wrap gap-2 text-xs mt-2">
-                        {song['調性'] && (
-                          <span className="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-md font-medium">
-                            調性: {song['調性']}
-                          </span>
-                        )}
-                        {song['速度'] && (
-                          <span className="bg-orange-50 text-orange-700 px-2.5 py-1 rounded-md font-medium">
-                            {song['速度']}
-                          </span>
-                        )}
-                        {song['發行者'] && (
-                          <span className="bg-purple-50 text-purple-700 px-2.5 py-1 rounded-md font-medium">
-                            {song['發行者']}
-                          </span>
-                        )}
-                      </div>
-                      
-                      {song['敬拜類型'] && song['敬拜類型'] !== '-' && (
-                        <div className="text-xs text-gray-500 mt-2 flex items-center gap-1">
-                          💿 {song['敬拜類型']}
-                        </div>
-                      )}
-                    </div>
+            )}
 
-                    {/* 操作按鈕區 */}
-                    <div className="flex gap-2 pt-2 mt-1 border-t border-gray-50">
-                      {song['歌譜連結'] ? (
-                        <a 
-                          href={song['歌譜連結']}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 transition-colors"
-                        >
-                          📄 開啟歌譜
-                        </a>
-                      ) : (
-                        <button disabled className="flex-1 bg-gray-100 text-gray-400 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 cursor-not-allowed">
-                          📄 無歌譜
-                        </button>
-                      )}
-                      
-                      {song['PPT連結'] ? (
-                        <a 
-                          href={song['PPT連結']}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 transition-colors"
-                        >
-                          🖥️ 開啟 PPT
-                        </a>
-                      ) : (
-                        <button disabled className="flex-1 bg-gray-100 text-gray-400 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 cursor-not-allowed">
-                          🖥️ 無 PPT
-                        </button>
-                      )}
-                    </div>
+            {!loading && !error && filteredSongs.map((song, idx) => (
+              <div
+                key={`${song['編號'] || 'song'}-${idx}`}
+                className="grid grid-cols-12 items-center text-xs hover:bg-slate-50"
+              >
+                {/* 歌名與編號 */}
+                <div className="col-span-3 p-2 border-r border-slate-100">
+                  <div className="font-bold text-slate-900 text-sm leading-snug break-words">
+                    {song['歌名']}
                   </div>
-                ))}
+                  {song['編號'] && (
+                    <div className="text-[11px] text-slate-400 mt-0.5">{song['編號']}</div>
+                  )}
+                </div>
+
+                {/* 調性與類型 */}
+                <div className="col-span-3 p-2 border-r border-slate-100 space-y-1">
+                  {song['調性'] && (
+                    <div className="inline-block bg-blue-100 text-blue-900 font-bold px-1.5 py-0.5 rounded">
+                      {song['調性']}
+                    </div>
+                  )}
+                  {song['速度'] && (
+                    <div className="text-[11px] text-slate-600">{song['速度']}</div>
+                  )}
+                  {song['敬拜類型'] && song['敬拜類型'] !== '-' && (
+                    <div className="text-[11px] text-slate-500 leading-tight break-words">
+                      {song['敬拜類型']}
+                    </div>
+                  )}
+                </div>
+
+                {/* 發行者與專輯 */}
+                <div className="col-span-3 p-2 border-r border-slate-100 space-y-0.5">
+                  {song['發行者'] && (
+                    <div className="font-medium text-slate-700 break-words">{song['發行者']}</div>
+                  )}
+                  {song['專輯'] && (
+                    <div className="text-[11px] text-slate-500 leading-tight break-words">
+                      {song['專輯']}
+                    </div>
+                  )}
+                </div>
+
+                {/* 歌譜與 PPT 按鈕 */}
+                <div className="col-span-3 p-1.5 flex flex-col gap-1">
+                  {song['歌譜連結'] ? (
+                    <a
+                      href={song['歌譜連結']}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-full text-center bg-blue-600 hover:bg-blue-700 text-white py-1.5 px-1 rounded font-medium"
+                    >
+                      歌譜
+                    </a>
+                  ) : (
+                    <span className="w-full text-center bg-slate-100 text-slate-400 py-1.5 px-1 rounded">
+                      無譜
+                    </span>
+                  )}
+
+                  {song['PPT連結'] ? (
+                    <a
+                      href={song['PPT連結']}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="w-full text-center bg-emerald-600 hover:bg-emerald-700 text-white py-1.5 px-1 rounded font-medium"
+                    >
+                      PPT
+                    </a>
+                  ) : (
+                    <span className="w-full text-center bg-slate-100 text-slate-400 py-1.5 px-1 rounded">
+                      無PPT
+                    </span>
+                  )}
+                </div>
               </div>
-            )}
+            ))}
           </div>
         </div>
       );
